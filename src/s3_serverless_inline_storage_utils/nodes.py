@@ -190,7 +190,11 @@ class S3ImageUpload:
             for i, image in enumerate(images):
                 temp_file = None
                 try:
-                    image_np = image.cpu().numpy()
+                    # Handle both tensor and numpy array inputs
+                    if hasattr(image, 'cpu'):
+                        image_np = image.cpu().numpy()
+                    else:
+                        image_np = image
                     
                     if len(images) > 1:
                         filename = self._generate_filename(f"{filename_prefix}_{i+1}")
