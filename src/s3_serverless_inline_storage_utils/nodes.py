@@ -13,6 +13,12 @@ from botocore.exceptions import NoCredentialsError, ClientError
 from botocore.config import Config
 import requests
 
+import sys
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__)))))), "comfy"))
+
+import comfy.sd
+import folder_paths
+
 
 class S3ImageUpload:
     """
@@ -556,14 +562,81 @@ class S3ImageLoad:
                     pass
 
 
+class StringCheckpointLoader:
+    """
+    Load checkpoint by providing a string filename
+    
+    This node allows you to load a checkpoint/safetensors file by providing
+    the filename as a string input, rather than selecting from a dropdown.
+    It looks for the file in the default checkpoints directory.
+    """
+    
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "ckpt_filename": ("STRING", {
+                    "default": "",
+                    "tooltip": "Filename of the checkpoint to load (e.g., 'model.safetensors')"
+                }),
+            }
+        }
+    
+    RETURN_TYPES = ("MODEL", "CLIP", "VAE")
+    OUTPUT_TOOLTIPS = (
+        "The model used for denoising latents.",
+        "The CLIP model used for encoding text prompts.",
+        "The VAE model used for encoding and decoding images to and from latent space."
+    )
+    FUNCTION = "load_checkpoint"
+    CATEGORY = "S3 Serverless Storage"
+    DESCRIPTION = "Load a checkpoint by providing the filename as a string input"
+
+    def load_checkpoint(self, ckpt_filename: str):
+        """
+        Load checkpoint from the default checkpoints directory using string filename
+        
+        Args:
+            ckpt_filename: The filename of the checkpoint to load
+            
+        Returns:
+            Tuple containing (MODEL, CLIP, VAE)
+        """
+        try:
+            if not ckpt_filename.strip():
+                raise ValueError("Checkpoint filename is required")
+            
+            filename = ckpt_filename.strip()
+            
+            # Get the full path using folder_paths
+            ckpt_path = folder_paths.get_full_path_or_raise("checkpoints", filename)
+            
+            # Load the checkpoint using ComfyUI's standard loading mechanism
+            out = comfy.sd.load_checkpoint_guess_config(
+                ckpt_path, 
+                output_vae=True, 
+                output_clip=True, 
+                embedding_directory=folder_paths.get_folder_paths("embeddings")
+            )
+            
+            return out[:3]  # Return MODEL, CLIP, VAE
+            
+        except FileNotFoundError as e:
+            raise FileNotFoundError(f"Checkpoint file '{filename}' not found in checkpoints directory. {str(e)}")
+        except Exception as e:
+            raise RuntimeError(f"Failed to load checkpoint '{filename}': {str(e)}")
+
+
 NODE_CLASS_MAPPINGS = {
     "S3ImageUpload": S3ImageUpload,
     "S3VideoUpload": S3VideoUpload,
-    "S3ImageLoad": S3ImageLoad
+    "S3ImageLoad": S3ImageLoad,
+    "StringCheckpointLoader": StringCheckpointLoader
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
     "S3ImageUpload": "S3 Image Upload (Inline Credentials)",
     "S3VideoUpload": "S3 Video Upload (Inline Credentials)", 
-    "S3ImageLoad": "S3 Image Load from URL"
+    "S3ImageLoad": "S3 Image Load from URL",
+    "StringCheckpointLoader": "String Checkpoint Loader"
 }
