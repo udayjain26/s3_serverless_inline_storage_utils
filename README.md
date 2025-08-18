@@ -1,6 +1,6 @@
 # S3 Serverless-Inline Storage Utils
 
-Upload images and videos to S3 directly from ComfyUI workflows. No environment variables needed - all credentials go directly in the nodes.
+Upload images and videos to S3 directly from ComfyUI workflows. Load checkpoints by filename. No environment variables needed - all credentials go directly in the nodes.
 
 ## Installation
 
@@ -24,6 +24,11 @@ Upload images and videos to S3 directly from ComfyUI workflows. No environment v
 - Works with public URLs and signed URLs
 - No credentials needed for public files
 
+**String Checkpoint Loader** - Load checkpoints by filename
+- Load any safetensors/checkpoint file from the checkpoints directory
+- Provide filename as string input instead of dropdown selection
+- Example: `model.safetensors` or `checkpoint.ckpt`
+
 ## Usage
 
 ### For AWS S3:
@@ -43,56 +48,11 @@ Upload images and videos to S3 directly from ComfyUI workflows. No environment v
 ### For other S3-compatible services:
 Fill in your service's S3 endpoint URL.
 
+### For String Checkpoint Loader:
+- ckpt_filename: Just the filename (e.g., `model.safetensors`)
+- File must exist in your ComfyUI checkpoints directory
+
 ## Security Note
 
 Don't share workflows with your credentials filled in. Clear the credential fields before sharing workflow files with others.
-
-## Develop
-
-To install the dev dependencies and pre-commit (will run the ruff hook), do:
-
-```bash
-cd s3_serverless_inline_storage_utils
-pip install -e .[dev]
-pre-commit install
-```
-
-The `-e` flag above will result in a "live" install, in the sense that any changes you make to your node extension will automatically be picked up the next time you run ComfyUI.
-
-## Publish to Github
-
-Install Github Desktop or follow these [instructions](https://docs.github.com/en/authentication/connecting-to-github-with-ssh/generating-a-new-ssh-key-and-adding-it-to-the-ssh-agent) for ssh.
-
-1. Create a Github repository that matches the directory name. 
-2. Push the files to Git
-```
-git add .
-git commit -m "project scaffolding"
-git push
-``` 
-
-## Writing custom nodes
-
-An example custom node is located in [node.py](src/s3_serverless_inline_storage_utils/nodes.py). To learn more, read the [docs](https://docs.comfy.org/essentials/custom_node_overview).
-
-
-## Tests
-
-This repo contains unit tests written in Pytest in the `tests/` directory. It is recommended to unit test your custom node.
-
-- [build-pipeline.yml](.github/workflows/build-pipeline.yml) will run pytest and linter on any open PRs
-- [validate.yml](.github/workflows/validate.yml) will run [node-diff](https://github.com/Comfy-Org/node-diff) to check for breaking changes
-
-## Publishing to Registry
-
-If you wish to share this custom node with others in the community, you can publish it to the registry. We've already auto-populated some fields in `pyproject.toml` under `tool.comfy`, but please double-check that they are correct.
-
-You need to make an account on https://registry.comfy.org and create an API key token.
-
-- [ ] Go to the [registry](https://registry.comfy.org). Login and create a publisher id (everything after the `@` sign on your registry profile). 
-- [ ] Add the publisher id into the pyproject.toml file.
-- [ ] Create an api key on the Registry for publishing from Github. [Instructions](https://docs.comfy.org/registry/publishing#create-an-api-key-for-publishing).
-- [ ] Add it to your Github Repository Secrets as `REGISTRY_ACCESS_TOKEN`.
-
-A Github action will run on every git push. You can also run the Github action manually. Full instructions [here](https://docs.comfy.org/registry/publishing). Join our [discord](https://discord.com/invite/comfyorg) if you have any questions!
 
