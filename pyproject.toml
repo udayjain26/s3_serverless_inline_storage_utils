@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "s3_serverless_inline_storage_utils"
-version = "1.0.3"
+version = "1.0.4"
 description = "S3 Storage Utilities that do not rely on environments to interact with S3 instances. Work with your buckets directly from within the workflow."
 authors = [
   {name = "Uday Jain", email = "uj9.uday@gmail.com"}
@@ -35,13 +35,13 @@ dev = [
 [project.urls]
 bugs = "https://github.com/udayjain26/s3_serverless_inline_storage_utils/issues"
 homepage = "https://github.com/udayjain26/s3_serverless_inline_storage_utils"
+Repository = "https://github.com/udayjain26/s3_serverless_inline_storage_utils"
 
 
 [tool.comfy]
 PublisherId = "ascension"
 DisplayName = "S3 Serverless-Inline Storage Utils"
 Icon = ""
-Repository = "https://github.com/udayjain26/s3_serverless_inline_storage_utils"
 
 
 
