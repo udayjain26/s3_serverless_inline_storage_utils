@@ -41,6 +41,7 @@ homepage = "https://github.com/udayjain26/s3_serverless_inline_storage_utils"
 PublisherId = "ascension"
 DisplayName = "S3 Serverless-Inline Storage Utils"
 Icon = ""
+Repository = "https://github.com/udayjain26/s3_serverless_inline_storage_utils"
 
 
 
