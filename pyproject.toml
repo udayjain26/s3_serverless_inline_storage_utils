@@ -11,6 +11,7 @@ authors = [
 ]
 readme = "README.md"
 license = {text = "GNU General Public License v3"}
+repository = "https://github.com/udayjain26/s3_serverless_inline_storage_utils"
 classifiers = []
 dependencies = [
     "boto3>=1.26.0",
