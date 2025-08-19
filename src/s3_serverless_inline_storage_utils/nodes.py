@@ -85,7 +85,7 @@ class S3ImageUpload:
 
     def _create_s3_client(self, access_key_id: str, secret_access_key: str, 
                          region: str, endpoint_url: Optional[str] = None) -> boto3.client:
-        """Create and return S3 client with provided credentials"""
+        """Create and return S3 client with provided credentials - serverless optimized"""
         try:
             addressing_style = 'path' if endpoint_url and 'supabase' in endpoint_url.lower() else 'virtual'
             
@@ -94,9 +94,16 @@ class S3ImageUpload:
                 signature_version='s3v4',
                 s3={'addressing_style': addressing_style},
                 retries={
-                    'max_attempts': 3,
+                    'max_attempts': 5,  # Increased for serverless
                     'mode': 'adaptive'
-                }
+                },
+                # Serverless-friendly timeouts
+                connect_timeout=60,
+                read_timeout=60,
+                max_pool_connections=50,
+                # DNS and connection optimizations
+                parameter_validation=False,
+                tcp_keepalive=True
             )
             
             client_kwargs = {
@@ -104,7 +111,7 @@ class S3ImageUpload:
                 'aws_access_key_id': access_key_id,
                 'aws_secret_access_key': secret_access_key,
                 'config': config,
-                'verify': True
+                'verify': True  # Keep SSL verification
             }
             
             if endpoint_url and endpoint_url.strip():
@@ -298,7 +305,7 @@ class S3VideoUpload:
 
     def _create_s3_client(self, access_key_id: str, secret_access_key: str, 
                          region: str, endpoint_url: Optional[str] = None) -> boto3.client:
-        """Create and return S3 client with provided credentials"""
+        """Create and return S3 client with provided credentials - serverless optimized"""
         try:
             addressing_style = 'path' if endpoint_url and 'supabase' in endpoint_url.lower() else 'virtual'
             
@@ -307,9 +314,16 @@ class S3VideoUpload:
                 signature_version='s3v4',
                 s3={'addressing_style': addressing_style},
                 retries={
-                    'max_attempts': 3,
+                    'max_attempts': 5,  # Increased for serverless
                     'mode': 'adaptive'
-                }
+                },
+                # Serverless-friendly timeouts
+                connect_timeout=60,
+                read_timeout=60,
+                max_pool_connections=50,
+                # DNS and connection optimizations
+                parameter_validation=False,
+                tcp_keepalive=True
             )
             
             client_kwargs = {
@@ -317,7 +331,7 @@ class S3VideoUpload:
                 'aws_access_key_id': access_key_id,
                 'aws_secret_access_key': secret_access_key,
                 'config': config,
-                'verify': True
+                'verify': True  # Keep SSL verification
             }
             
             if endpoint_url and endpoint_url.strip():
@@ -721,6 +735,159 @@ class StringLoraLoader:
             raise RuntimeError(f"Failed to load LoRA '{filename}': {str(e)}")
 
 
+class S3DiagnosticTest:
+    """
+    Diagnostic node to test S3 connectivity in serverless environments
+    
+    This node helps diagnose connection issues to S3-compatible services
+    like Supabase by testing basic connectivity and providing detailed error info.
+    """
+    
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "bucket_name": ("STRING", {
+                    "default": "", 
+                    "tooltip": "S3 bucket name to test"
+                }),
+                "access_key_id": ("STRING", {
+                    "default": "", 
+                    "tooltip": "AWS Access Key ID"
+                }),
+                "secret_access_key": ("STRING", {
+                    "default": "", 
+                    "tooltip": "AWS Secret Access Key"
+                }),
+                "region": ("STRING", {
+                    "default": "us-east-1", 
+                    "tooltip": "AWS region"
+                }),
+            },
+            "optional": {
+                "endpoint_url": ("STRING", {
+                    "default": "", 
+                    "tooltip": "Custom S3 endpoint URL (for S3-compatible services)"
+                }),
+            },
+        }
+
+    RETURN_TYPES = ("STRING", "STRING", "STRING")
+    RETURN_NAMES = ("connectivity_test", "bucket_test", "detailed_info")
+    FUNCTION = "test_s3_connection"
+    OUTPUT_NODE = True
+    CATEGORY = "S3 Serverless Storage"
+    DESCRIPTION = "Test S3 connectivity for serverless debugging"
+
+    def test_s3_connection(self, bucket_name: str, access_key_id: str, 
+                          secret_access_key: str, region: str, endpoint_url: str = ""):
+        """Test S3 connectivity and return diagnostic information"""
+        import socket
+        import urllib.parse
+        
+        results = []
+        bucket_result = "Not tested"
+        detailed_info = []
+        
+        try:
+            # Basic validation
+            if not all([bucket_name.strip(), access_key_id.strip(), secret_access_key.strip()]):
+                return ("FAILED: Missing required credentials", "Not tested", "Missing bucket_name, access_key_id, or secret_access_key")
+            
+            endpoint = endpoint_url.strip() if endpoint_url else None
+            
+            # Test 1: DNS resolution
+            if endpoint:
+                parsed = urllib.parse.urlparse(endpoint)
+                hostname = parsed.hostname
+                try:
+                    socket.gethostbyname(hostname)
+                    results.append(f"✓ DNS resolution successful for {hostname}")
+                except socket.gaierror as e:
+                    results.append(f"✗ DNS resolution failed for {hostname}: {e}")
+                    detailed_info.append(f"DNS Error: {e}")
+            
+            # Test 2: Create S3 client
+            try:
+                addressing_style = 'path' if endpoint and 'supabase' in endpoint.lower() else 'virtual'
+                
+                config = Config(
+                    region_name=region,
+                    signature_version='s3v4',
+                    s3={'addressing_style': addressing_style},
+                    retries={'max_attempts': 2, 'mode': 'standard'},
+                    connect_timeout=30,
+                    read_timeout=30,
+                    parameter_validation=False,
+                    tcp_keepalive=True
+                )
+                
+                client_kwargs = {
+                    'service_name': 's3',
+                    'aws_access_key_id': access_key_id,
+                    'aws_secret_access_key': secret_access_key,
+                    'config': config,
+                    'verify': True
+                }
+                
+                if endpoint:
+                    client_kwargs['endpoint_url'] = endpoint
+                
+                s3_client = boto3.client(**client_kwargs)
+                results.append("✓ S3 client created successfully")
+                
+                # Test 3: List buckets (basic connectivity)
+                try:
+                    response = s3_client.list_buckets()
+                    results.append("✓ list_buckets() successful")
+                    bucket_names = [b['Name'] for b in response.get('Buckets', [])]
+                    if bucket_name in bucket_names:
+                        bucket_result = f"✓ Bucket '{bucket_name}' found"
+                    else:
+                        bucket_result = f"✗ Bucket '{bucket_name}' not found. Available: {bucket_names[:3]}"
+                        
+                except ClientError as e:
+                    error_code = e.response['Error']['Code']
+                    results.append(f"✗ list_buckets() failed: {error_code}")
+                    detailed_info.append(f"AWS Error: {error_code} - {e.response['Error']['Message']}")
+                    
+                    # Test 4: Try bucket-specific operation
+                    try:
+                        s3_client.head_bucket(Bucket=bucket_name)
+                        bucket_result = f"✓ Bucket '{bucket_name}' accessible via head_bucket"
+                    except ClientError as bucket_e:
+                        bucket_error_code = bucket_e.response['Error']['Code']
+                        bucket_result = f"✗ Bucket test failed: {bucket_error_code}"
+                        detailed_info.append(f"Bucket Error: {bucket_error_code} - {bucket_e.response['Error']['Message']}")
+                
+            except Exception as client_e:
+                results.append(f"✗ S3 client creation failed: {str(client_e)}")
+                detailed_info.append(f"Client Creation Error: {str(client_e)}")
+                
+        except Exception as e:
+            results.append(f"✗ Unexpected error: {str(e)}")
+            detailed_info.append(f"General Error: {str(e)}")
+        
+        # Environment info
+        import platform
+        import os
+        env_info = [
+            f"Platform: {platform.system()} {platform.release()}",
+            f"Python: {platform.python_version()}",
+            f"Boto3 available: {bool(boto3)}",
+            f"Region: {region}",
+            f"Endpoint: {endpoint or 'AWS Default'}",
+            f"Addressing Style: {'path' if endpoint and 'supabase' in endpoint.lower() else 'virtual'}"
+        ]
+        
+        connectivity_summary = "PASSED" if all("✓" in r for r in results if r.startswith(("✓", "✗"))) else "FAILED"
+        return (
+            f"{connectivity_summary}: {'; '.join(results)}",
+            bucket_result,
+            "\n".join(env_info + detailed_info)
+        )
+
+
 class URLLoraLoader:
     """
     Load LoRA from URL
@@ -875,7 +1042,8 @@ NODE_CLASS_MAPPINGS = {
     "S3ImageLoad": S3ImageLoad,
     "StringCheckpointLoader": StringCheckpointLoader,
     "StringLoraLoader": StringLoraLoader,
-    "URLLoraLoader": URLLoraLoader
+    "URLLoraLoader": URLLoraLoader,
+    "S3DiagnosticTest": S3DiagnosticTest
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
@@ -884,5 +1052,6 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "S3ImageLoad": "S3 Image Load from URL",
     "StringCheckpointLoader": "String Checkpoint Loader",
     "StringLoraLoader": "String LoRA Loader",
-    "URLLoraLoader": "URL LoRA Loader"
+    "URLLoraLoader": "URL LoRA Loader",
+    "S3DiagnosticTest": "S3 Connection Diagnostic Test"
 }
