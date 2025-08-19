@@ -679,7 +679,7 @@ class StringLoraLoader:
         Args:
             model: The diffusion model to apply LoRA to
             clip: The CLIP model to apply LoRA to
-            lora_filename: The filename of the LoRA to load
+            lora_filename: The filename of the LoRA to load (can be empty for no LoRA)
             strength_model: Strength for model modification
             strength_clip: Strength for CLIP modification
             
@@ -687,18 +687,19 @@ class StringLoraLoader:
             Tuple containing (MODEL, CLIP)
         """
         try:
+            # Handle empty filename or zero strengths - just return original models
             if strength_model == 0 and strength_clip == 0:
                 return (model, clip)
             
-            if not lora_filename.strip():
-                raise ValueError("LoRA filename is required")
-            
             filename = lora_filename.strip()
+            if not filename:
+                # Empty string means no LoRA, return original models
+                return (model, clip)
             
             # Get the full path using folder_paths
             lora_path = folder_paths.get_full_path_or_raise("loras", filename)
             
-            # Load LoRA with caching (similar to original LoraLoader)
+            # Load LoRA with caching (exactly like original LoraLoader)
             lora = None
             if self.loaded_lora is not None:
                 if self.loaded_lora[0] == lora_path:
@@ -710,7 +711,7 @@ class StringLoraLoader:
                 lora = comfy.utils.load_torch_file(lora_path, safe_load=True)
                 self.loaded_lora = (lora_path, lora)
             
-            # Apply LoRA to model and clip
+            # Apply LoRA to model and clip using the same method as original LoraLoader
             model_lora, clip_lora = comfy.sd.load_lora_for_models(model, clip, lora, strength_model, strength_clip)
             return (model_lora, clip_lora)
             
