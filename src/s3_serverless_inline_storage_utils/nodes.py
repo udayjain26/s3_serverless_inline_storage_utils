@@ -17,6 +17,7 @@ import sys
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__)))))), "comfy"))
 
 import comfy.sd
+import comfy.utils
 import folder_paths
 
 
@@ -627,16 +628,110 @@ class StringCheckpointLoader:
             raise RuntimeError(f"Failed to load checkpoint '{filename}': {str(e)}")
 
 
+class StringLoraLoader:
+    """
+    Load LoRA by providing a string filename
+    
+    This node allows you to load a LoRA file by providing the filename as a string input,
+    rather than selecting from a dropdown. It looks for the file in the default loras directory.
+    """
+    
+    def __init__(self):
+        self.loaded_lora = None
+    
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "model": ("MODEL", {"tooltip": "The diffusion model the LoRA will be applied to."}),
+                "clip": ("CLIP", {"tooltip": "The CLIP model the LoRA will be applied to."}),
+                "lora_filename": ("STRING", {
+                    "default": "",
+                    "tooltip": "Filename of the LoRA to load (e.g., 'lora_name.safetensors')"
+                }),
+                "strength_model": ("FLOAT", {
+                    "default": 1.0, 
+                    "min": -100.0, 
+                    "max": 100.0, 
+                    "step": 0.01, 
+                    "tooltip": "How strongly to modify the diffusion model. This value can be negative."
+                }),
+                "strength_clip": ("FLOAT", {
+                    "default": 1.0, 
+                    "min": -100.0, 
+                    "max": 100.0, 
+                    "step": 0.01, 
+                    "tooltip": "How strongly to modify the CLIP model. This value can be negative."
+                }),
+            }
+        }
+    
+    RETURN_TYPES = ("MODEL", "CLIP")
+    OUTPUT_TOOLTIPS = ("The modified diffusion model.", "The modified CLIP model.")
+    FUNCTION = "load_lora"
+    CATEGORY = "S3 Serverless Storage"
+    DESCRIPTION = "Load a LoRA by providing the filename as a string input"
+
+    def load_lora(self, model, clip, lora_filename: str, strength_model: float, strength_clip: float):
+        """
+        Load LoRA from the default loras directory using string filename
+        
+        Args:
+            model: The diffusion model to apply LoRA to
+            clip: The CLIP model to apply LoRA to
+            lora_filename: The filename of the LoRA to load
+            strength_model: Strength for model modification
+            strength_clip: Strength for CLIP modification
+            
+        Returns:
+            Tuple containing (MODEL, CLIP)
+        """
+        try:
+            if strength_model == 0 and strength_clip == 0:
+                return (model, clip)
+            
+            if not lora_filename.strip():
+                raise ValueError("LoRA filename is required")
+            
+            filename = lora_filename.strip()
+            
+            # Get the full path using folder_paths
+            lora_path = folder_paths.get_full_path_or_raise("loras", filename)
+            
+            # Load LoRA with caching (similar to original LoraLoader)
+            lora = None
+            if self.loaded_lora is not None:
+                if self.loaded_lora[0] == lora_path:
+                    lora = self.loaded_lora[1]
+                else:
+                    self.loaded_lora = None
+            
+            if lora is None:
+                lora = comfy.utils.load_torch_file(lora_path, safe_load=True)
+                self.loaded_lora = (lora_path, lora)
+            
+            # Apply LoRA to model and clip
+            model_lora, clip_lora = comfy.sd.load_lora_for_models(model, clip, lora, strength_model, strength_clip)
+            return (model_lora, clip_lora)
+            
+        except FileNotFoundError as e:
+            raise FileNotFoundError(f"LoRA file '{filename}' not found in loras directory. {str(e)}")
+        except Exception as e:
+            raise RuntimeError(f"Failed to load LoRA '{filename}': {str(e)}")
+
+
 NODE_CLASS_MAPPINGS = {
     "S3ImageUpload": S3ImageUpload,
     "S3VideoUpload": S3VideoUpload,
     "S3ImageLoad": S3ImageLoad,
-    "StringCheckpointLoader": StringCheckpointLoader
+    "StringCheckpointLoader": StringCheckpointLoader,
+    "StringLoraLoader": StringLoraLoader
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
     "S3ImageUpload": "S3 Image Upload (Inline Credentials)",
     "S3VideoUpload": "S3 Video Upload (Inline Credentials)", 
     "S3ImageLoad": "S3 Image Load from URL",
-    "StringCheckpointLoader": "String Checkpoint Loader"
+    "StringCheckpointLoader": "String Checkpoint Loader",
+    "StringLoraLoader": "String LoRA Loader"
 }
