@@ -721,12 +721,161 @@ class StringLoraLoader:
             raise RuntimeError(f"Failed to load LoRA '{filename}': {str(e)}")
 
 
+class URLLoraLoader:
+    """
+    Load LoRA from URL
+    
+    This node allows you to load a LoRA file directly from a URL,
+    downloads it temporarily and applies it to the model and clip.
+    """
+    
+    def __init__(self):
+        self.loaded_lora = None
+    
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "model": ("MODEL", {"tooltip": "The diffusion model the LoRA will be applied to."}),
+                "clip": ("CLIP", {"tooltip": "The CLIP model the LoRA will be applied to."}),
+                "lora_url": ("STRING", {
+                    "default": "",
+                    "tooltip": "URL to the LoRA file (e.g., 'https://example.com/lora.safetensors')"
+                }),
+                "strength_model": ("FLOAT", {
+                    "default": 1.0, 
+                    "min": -100.0, 
+                    "max": 100.0, 
+                    "step": 0.01, 
+                    "tooltip": "How strongly to modify the diffusion model. This value can be negative."
+                }),
+                "strength_clip": ("FLOAT", {
+                    "default": 1.0, 
+                    "min": -100.0, 
+                    "max": 100.0, 
+                    "step": 0.01, 
+                    "tooltip": "How strongly to modify the CLIP model. This value can be negative."
+                }),
+            },
+            "optional": {
+                "timeout": ("INT", {
+                    "default": 30,
+                    "min": 5,
+                    "max": 300,
+                    "tooltip": "Request timeout in seconds"
+                }),
+            },
+        }
+    
+    RETURN_TYPES = ("MODEL", "CLIP", "STRING")
+    RETURN_NAMES = ("model", "clip", "status")
+    OUTPUT_TOOLTIPS = ("The modified diffusion model.", "The modified CLIP model.", "Status message")
+    FUNCTION = "load_lora_from_url"
+    CATEGORY = "S3 Serverless Storage"
+    DESCRIPTION = "Load a LoRA by downloading from a URL"
+
+    def _download_lora(self, url: str, timeout: int) -> str:
+        """Download LoRA from URL and return temp file path"""
+        try:
+            headers = {
+                'User-Agent': 'ComfyUI-URLLoraLoader/1.0'
+            }
+            
+            response = requests.get(url, timeout=timeout, headers=headers, stream=True)
+            response.raise_for_status()
+            
+            # Determine file extension from URL or content-type
+            filename_from_url = os.path.basename(url.split('?')[0])
+            if not filename_from_url or '.' not in filename_from_url:
+                # Default to .safetensors if no extension found
+                ext = '.safetensors'
+            else:
+                ext = os.path.splitext(filename_from_url)[1]
+                if ext.lower() not in ['.safetensors', '.ckpt', '.pt', '.pth']:
+                    ext = '.safetensors'
+            
+            with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as temp_file:
+                for chunk in response.iter_content(chunk_size=8192):
+                    temp_file.write(chunk)
+                temp_file_path = temp_file.name
+            
+            return temp_file_path
+            
+        except requests.exceptions.Timeout:
+            raise RuntimeError(f"Request timed out after {timeout} seconds")
+        except requests.exceptions.RequestException as e:
+            raise RuntimeError(f"Failed to download LoRA: {str(e)}")
+        except Exception as e:
+            raise RuntimeError(f"Download error: {str(e)}")
+
+    def load_lora_from_url(self, model, clip, lora_url: str, strength_model: float, strength_clip: float, timeout: int = 30):
+        """
+        Load LoRA from URL and apply to model and clip
+        
+        Args:
+            model: The diffusion model to apply LoRA to
+            clip: The CLIP model to apply LoRA to
+            lora_url: The URL of the LoRA to download and load
+            strength_model: Strength for model modification
+            strength_clip: Strength for CLIP modification
+            timeout: Request timeout in seconds
+            
+        Returns:
+            Tuple containing (MODEL, CLIP, STATUS)
+        """
+        temp_file_path = None
+        try:
+            # Handle empty URL or zero strengths - just return original models
+            if strength_model == 0 and strength_clip == 0:
+                return (model, clip, "No LoRA applied (zero strength)")
+            
+            url = lora_url.strip()
+            if not url:
+                # Empty string means no LoRA, return original models
+                return (model, clip, "No LoRA applied (empty URL)")
+            
+            # Download LoRA file
+            temp_file_path = self._download_lora(url, timeout)
+            
+            # Load LoRA with caching based on URL
+            lora = None
+            if self.loaded_lora is not None:
+                if self.loaded_lora[0] == url:
+                    lora = self.loaded_lora[1]
+                else:
+                    self.loaded_lora = None
+            
+            if lora is None:
+                lora = comfy.utils.load_torch_file(temp_file_path, safe_load=True)
+                self.loaded_lora = (url, lora)
+            
+            # Apply LoRA to model and clip
+            model_lora, clip_lora = comfy.sd.load_lora_for_models(model, clip, lora, strength_model, strength_clip)
+            
+            status_msg = f"Successfully loaded LoRA from URL (strength: model={strength_model}, clip={strength_clip})"
+            return (model_lora, clip_lora, status_msg)
+            
+        except Exception as e:
+            error_msg = f"Failed to load LoRA from URL: {str(e)}"
+            print(f"URLLoraLoader Error: {error_msg}")
+            return (model, clip, error_msg)
+            
+        finally:
+            # Clean up temp file
+            if temp_file_path and os.path.exists(temp_file_path):
+                try:
+                    os.unlink(temp_file_path)
+                except OSError:
+                    pass
+
+
 NODE_CLASS_MAPPINGS = {
     "S3ImageUpload": S3ImageUpload,
     "S3VideoUpload": S3VideoUpload,
     "S3ImageLoad": S3ImageLoad,
     "StringCheckpointLoader": StringCheckpointLoader,
-    "StringLoraLoader": StringLoraLoader
+    "StringLoraLoader": StringLoraLoader,
+    "URLLoraLoader": URLLoraLoader
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
@@ -734,5 +883,6 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "S3VideoUpload": "S3 Video Upload (Inline Credentials)", 
     "S3ImageLoad": "S3 Image Load from URL",
     "StringCheckpointLoader": "String Checkpoint Loader",
-    "StringLoraLoader": "String LoRA Loader"
+    "StringLoraLoader": "String LoRA Loader",
+    "URLLoraLoader": "URL LoRA Loader"
 }
