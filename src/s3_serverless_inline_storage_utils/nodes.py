@@ -1176,10 +1176,223 @@ class URLLoraLoader:
                     pass
 
 
+class S3FileUpload:
+    """
+    Upload any file to S3 with inline credentials
+    
+    Takes a file path (like from VHS VideoCombine) and uploads it directly to S3.
+    Perfect for chaining with VideoHelperSuite nodes for fast video creation + upload.
+    """
+    
+    def __init__(self):
+        pass
+        
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "filenames": ("VHS_FILENAMES", {
+                    "tooltip": "Video filenames from VHS VideoCombine"
+                }),
+                "bucket_name": ("STRING", {
+                    "default": "", 
+                    "tooltip": "S3 bucket name"
+                }),
+                "access_key_id": ("STRING", {
+                    "default": "", 
+                    "tooltip": "AWS Access Key ID"
+                }),
+                "secret_access_key": ("STRING", {
+                    "default": "", 
+                    "tooltip": "AWS Secret Access Key"
+                }),
+                "region": ("STRING", {
+                    "default": "us-east-1", 
+                    "tooltip": "AWS region"
+                }),
+            },
+            "optional": {
+                "endpoint_url": ("STRING", {
+                    "default": "", 
+                    "tooltip": "Custom S3 endpoint URL (for S3-compatible services like Supabase)"
+                }),
+                "folder_path": ("STRING", {
+                    "default": "uploads", 
+                    "tooltip": "Folder path within bucket"
+                }),
+                "filename_prefix": ("STRING", {
+                    "default": "s3_video", 
+                    "tooltip": "Filename prefix for uploaded file"
+                }),
+            },
+        }
+
+    RETURN_TYPES = ("STRING", "STRING", "INT")
+    RETURN_NAMES = ("s3_url", "status", "file_size_mb")
+    FUNCTION = "upload_file"
+    OUTPUT_NODE = True
+    CATEGORY = "S3 Serverless Storage"
+    DESCRIPTION = "Upload any file to S3 - perfect for VHS VideoCombine output"
+
+    def _create_s3_client(self, access_key_id: str, secret_access_key: str, 
+                         region: str, endpoint_url: Optional[str] = None) -> boto3.client:
+        """Create S3 client - same as other S3 nodes"""
+        try:
+            addressing_style = 'path' if endpoint_url and 'supabase' in endpoint_url.lower() else 'virtual'
+            
+            config = Config(
+                region_name=region,
+                signature_version='s3v4',
+                s3={'addressing_style': addressing_style},
+                retries={'max_attempts': 5, 'mode': 'adaptive'},
+                connect_timeout=60,
+                read_timeout=60,
+                max_pool_connections=50,
+                parameter_validation=False,
+                tcp_keepalive=True
+            )
+            
+            client_kwargs = {
+                'service_name': 's3',
+                'aws_access_key_id': access_key_id,
+                'aws_secret_access_key': secret_access_key,
+                'config': config,
+                'verify': True
+            }
+            
+            if endpoint_url and endpoint_url.strip():
+                client_kwargs['endpoint_url'] = endpoint_url.strip()
+            
+            return boto3.client(**client_kwargs)
+            
+        except Exception as e:
+            raise RuntimeError(f"Failed to create S3 client: {str(e)}")
+
+    def _get_content_type(self, file_path: str) -> str:
+        """Get content type based on file extension"""
+        ext = os.path.splitext(file_path)[1].lower()
+        content_type_map = {
+            # Video formats
+            '.mp4': 'video/mp4',
+            '.webm': 'video/webm',
+            '.avi': 'video/x-msvideo',
+            '.mov': 'video/quicktime',
+            '.wmv': 'video/x-ms-wmv',
+            '.flv': 'video/x-flv',
+            # Image formats
+            '.jpg': 'image/jpeg',
+            '.jpeg': 'image/jpeg',
+            '.png': 'image/png',
+            '.webp': 'image/webp',
+            '.gif': 'image/gif',
+            # Audio formats
+            '.mp3': 'audio/mpeg',
+            '.wav': 'audio/wav',
+            '.ogg': 'audio/ogg',
+        }
+        return content_type_map.get(ext, 'application/octet-stream')
+
+    def upload_file(self, filenames, bucket_name: str, access_key_id: str, 
+                   secret_access_key: str, region: str, endpoint_url: str = "", 
+                   folder_path: str = "uploads", filename_prefix: str = "s3_video"):
+        """
+        Upload file to S3
+        
+        Args:
+            filenames: VHS_FILENAMES tuple from VideoCombine
+            bucket_name, access_key_id, secret_access_key, region: S3 credentials
+            endpoint_url: Optional custom endpoint
+            folder_path: Folder within bucket
+            filename_prefix: Prefix for uploaded filename
+            
+        Returns:
+            Tuple containing (s3_url, status_message, file_size_mb)
+        """
+        try:
+            # Extract file path from VHS_FILENAMES
+            # VHS returns: (save_output, [list_of_file_paths])
+            if not filenames or len(filenames) < 2:
+                return "", "Error: Invalid VHS filenames input", 0
+            
+            save_output, output_files = filenames
+            if not output_files or len(output_files) == 0:
+                return "", "Error: No output files from VHS VideoCombine", 0
+            
+            # Use the last file (final video output)
+            file_path = output_files[-1]
+                
+            if not all([bucket_name.strip(), access_key_id.strip(), secret_access_key.strip()]):
+                return "", "Error: Missing S3 credentials", 0
+            
+            file_path = file_path.strip()
+            
+            # Check if file exists
+            if not os.path.exists(file_path):
+                return "", f"Error: File not found: {file_path}", 0
+            
+            # Get file info
+            file_size_bytes = os.path.getsize(file_path)
+            file_size_mb = round(file_size_bytes / (1024 * 1024), 2)
+            
+            if file_size_bytes == 0:
+                return "", "Error: File is empty", 0
+            
+            # Create S3 client
+            s3_client = self._create_s3_client(access_key_id, secret_access_key, region, endpoint_url)
+            
+            # Prepare S3 key
+            folder_path = folder_path.strip().strip('/')
+            if folder_path:
+                folder_path += '/'
+            
+            # Get original file extension from VHS output
+            original_ext = os.path.splitext(file_path)[1]  # e.g., ".mp4"
+            if not original_ext:
+                original_ext = ".mp4"  # Default to .mp4 if no extension
+            
+            # Create filename with prefix + extension
+            filename = f"{filename_prefix.strip()}{original_ext}"
+            
+            s3_key = f"{folder_path}{filename}"
+            
+            # Get content type
+            content_type = self._get_content_type(file_path)
+            
+            # Upload file
+            extra_args = {'ContentType': content_type}
+            s3_client.upload_file(file_path, bucket_name, s3_key, ExtraArgs=extra_args)
+            
+            # Generate S3 URL
+            endpoint_url_clean = s3_client._endpoint.host
+            if 'supabase' in endpoint_url_clean.lower():
+                s3_url = f"{endpoint_url_clean}/object/public/{bucket_name}/{s3_key}"
+            elif endpoint_url_clean.startswith('https://s3.'):
+                s3_url = f"https://{bucket_name}.s3.amazonaws.com/{s3_key}"
+            else:
+                s3_url = f"{endpoint_url_clean}/{bucket_name}/{s3_key}"
+            
+            status_msg = f"Successfully uploaded {filename} ({file_size_mb}MB) to S3"
+            return s3_url, status_msg, int(file_size_mb)
+            
+        except ClientError as e:
+            error_code = e.response['Error']['Code']
+            if error_code == 'NoSuchBucket':
+                error_msg = f"Error: Bucket '{bucket_name}' does not exist"
+            elif error_code == 'AccessDenied':
+                error_msg = "Error: Access denied. Check your credentials and bucket permissions"
+            else:
+                error_msg = f"Error: S3 upload failed: {str(e)}"
+            return "", error_msg, 0
+        except Exception as e:
+            error_msg = f"Error: Upload failed: {str(e)}"
+            return "", error_msg, 0
+
+
 NODE_CLASS_MAPPINGS = {
     "S3ImageUpload": S3ImageUpload,
     "S3VideoUpload": S3VideoUpload,
     "S3ImageLoad": S3ImageLoad,
+    "S3FileUpload": S3FileUpload,
     "StringCheckpointLoader": StringCheckpointLoader,
     "StringLoraLoader": StringLoraLoader,
     "URLLoraLoader": URLLoraLoader,
@@ -1190,6 +1403,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "S3ImageUpload": "S3 Image Upload (Inline Credentials)",
     "S3VideoUpload": "S3 Video Upload (Inline Credentials)", 
     "S3ImageLoad": "S3 Image Load from URL",
+    "S3FileUpload": "S3 File Upload (VHS Compatible)",
     "StringCheckpointLoader": "String Checkpoint Loader",
     "StringLoraLoader": "String LoRA Loader",
     "URLLoraLoader": "URL LoRA Loader",
