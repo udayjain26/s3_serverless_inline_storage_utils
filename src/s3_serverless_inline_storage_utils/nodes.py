@@ -651,7 +651,7 @@ class S3ImageLoad:
         except Exception as e:
             raise RuntimeError(f"Download error: {str(e)}")
 
-    def _load_image_from_path(self, image_path: str) -> np.ndarray:
+    def _load_image_from_path(self, image_path: str) -> torch.Tensor:
         """Load image from file path and convert to ComfyUI format"""
         try:
             img = Image.open(image_path)
@@ -666,17 +666,18 @@ class S3ImageLoad:
             if len(img_array.shape) == 3:
                 img_array = img_array[None, ...]
             
-            return img_array
+            # Convert to PyTorch tensor to match ComfyUI expectations
+            return torch.from_numpy(img_array)
             
         except Exception as e:
             raise RuntimeError(f"Failed to load image: {str(e)}")
 
-    def load_image(self, url: str, timeout: int = 30) -> Tuple[np.ndarray, str, str]:
+    def load_image(self, url: str, timeout: int = 30) -> Tuple[torch.Tensor, str, str]:
         """
         Main image loading function
         
         Returns:
-            - Image as numpy array in ComfyUI format
+            - Image as torch tensor in ComfyUI format
             - Original filename
             - Status message
         """
@@ -697,7 +698,7 @@ class S3ImageLoad:
         except Exception as e:
             error_msg = f"Image load failed: {str(e)}"
             
-            dummy_image = np.zeros((1, 64, 64, 3), dtype=np.float32)
+            dummy_image = torch.zeros((1, 64, 64, 3), dtype=torch.float32)
             return dummy_image, "error.jpg", error_msg
             
         finally:
