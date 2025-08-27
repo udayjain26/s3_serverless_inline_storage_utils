@@ -420,62 +420,71 @@ class S3VideoUpload:
     def _create_video_from_images(self, images: torch.Tensor, frame_rate: float, 
                                  video_format: str, video_quality: int, 
                                  audio: Optional[Dict] = None) -> str:
-        """Create video file from image tensors"""
+        """Create video file from image tensors using streaming approach for better performance"""
         ffmpeg_path = self._find_ffmpeg()
         
-        # Create temporary directory for frames
-        temp_dir = tempfile.mkdtemp()
-        temp_video_path = None
+        # Create temporary video file
+        temp_video_fd, temp_video_path = tempfile.mkstemp(suffix=f".{video_format}")
+        os.close(temp_video_fd)
         
         try:
-            # Save frames as temporary images
-            for i, image in enumerate(images):
-                pil_image = self._tensor_to_pil(image)
-                frame_path = os.path.join(temp_dir, f"frame_{i:06d}.png")
-                pil_image.save(frame_path, "PNG")
+            # Convert first image to get dimensions
+            first_image = self._tensor_to_pil(images[0])
+            width, height = first_image.size
             
-            # Create temporary video file
-            temp_video_fd, temp_video_path = tempfile.mkstemp(suffix=f".{video_format}")
-            os.close(temp_video_fd)
-            
-            # Build ffmpeg command
+            # Build ffmpeg command for streaming input
             cmd = [
                 ffmpeg_path,
                 '-y',  # Overwrite output file
-                '-framerate', str(frame_rate),
-                '-i', os.path.join(temp_dir, 'frame_%06d.png'),
-                '-c:v', 'libx264',
-                '-crf', str(video_quality),
-                '-pix_fmt', 'yuv420p',
+                '-f', 'rawvideo',  # Raw video input format
+                '-pix_fmt', 'rgb24',  # Pixel format
+                '-s', f'{width}x{height}',  # Video size
+                '-r', str(frame_rate),  # Input framerate
+                '-i', '-',  # Read from stdin
+                '-c:v', 'libx264',  # Video codec
+                '-crf', str(video_quality),  # Quality
+                '-pix_fmt', 'yuv420p',  # Output pixel format
+                temp_video_path
             ]
             
-            # Add audio if provided
-            if audio is not None and 'waveform' in audio:
-                # Save audio to temporary file
-                audio_temp_fd, audio_temp_path = tempfile.mkstemp(suffix=".wav")
-                os.close(audio_temp_fd)
+            # Start FFmpeg process
+            with subprocess.Popen(cmd, stdin=subprocess.PIPE, stderr=subprocess.PIPE, 
+                                stdout=subprocess.PIPE) as proc:
                 try:
-                    # Simple audio handling - would need more sophisticated audio processing
-                    # For now, just create video without audio if audio processing fails
-                    pass
-                except Exception:
-                    pass
-            
-            cmd.append(temp_video_path)
-            
-            # Run ffmpeg
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
-            if result.returncode != 0:
-                raise RuntimeError(f"FFmpeg failed: {result.stderr}")
+                    # Stream images directly to FFmpeg
+                    for image in images:
+                        # Convert tensor to PIL Image
+                        pil_image = self._tensor_to_pil(image)
+                        # Ensure consistent size
+                        if pil_image.size != (width, height):
+                            pil_image = pil_image.resize((width, height), Image.Resampling.LANCZOS)
+                        # Convert to RGB if needed
+                        if pil_image.mode != 'RGB':
+                            pil_image = pil_image.convert('RGB')
+                        # Write raw RGB data to FFmpeg
+                        proc.stdin.write(pil_image.tobytes())
+                    
+                    # Close stdin and wait for completion
+                    proc.stdin.close()
+                    stdout, stderr = proc.communicate()
+                    
+                    if proc.returncode != 0:
+                        raise RuntimeError(f"FFmpeg failed: {stderr.decode('utf-8')}")
+                        
+                except BrokenPipeError as e:
+                    stdout, stderr = proc.communicate()
+                    raise RuntimeError(f"FFmpeg pipe error: {stderr.decode('utf-8')}")
                 
             return temp_video_path
             
-        finally:
-            # Clean up temporary frame files
-            try:
-                shutil.rmtree(temp_dir)
-            except OSError:
-                pass
+        except Exception as e:
+            # Clean up temp file on error
+            if os.path.exists(temp_video_path):
+                try:
+                    os.unlink(temp_video_path)
+                except OSError:
+                    pass
+            raise e
 
     def _upload_video_to_s3(self, s3_client: boto3.client, local_path: str, 
                            bucket_name: str, s3_key: str) -> str:
